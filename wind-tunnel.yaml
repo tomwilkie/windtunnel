@@ -1,0 +1,300 @@
+esphome:
+  name: "wind-tunnel"
+  friendly_name: Wind Tunnel
+  on_boot:
+    then:
+      - delay: 1s
+      - display.page.show: main_page
+  libraries:
+    - Wire
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  baud_rate: 0  # disable serial uart logging
+  logs:
+    fan: WARN
+    sensor: WARN
+    hx711: WARN
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret home_assistant_api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  use_address: wind-tunnel-2.local
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Wind Tunnel Fallback Hotspot"
+    password: !secret wifi_password
+
+captive_portal:
+
+web_server:
+
+prometheus:
+
+globals:
+  - id: tare_offset
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  - id: prev_raw_value
+    type: float
+    restore_value: yes
+    initial_value: '0'
+
+spi:
+  clk_pin: GPIO17
+  mosi_pin: GPIO21
+
+output:
+  - platform: ledc
+    pin: GPIO05
+    channel: 0
+    frequency: 19531Hz
+    id: pwm_output
+  - platform: ledc
+    pin: GPIO16
+    channel: 2
+    min_power: 0.65
+    max_power: 0.99
+    frequency: 500Hz
+    zero_means_zero: true
+    id: backlightdim
+
+light:
+  - platform: monochromatic
+    id: backlightlight
+    name: "Backlight"  
+    output: backlightdim
+    restore_mode: RESTORE_DEFAULT_ON
+    
+fan:
+  - platform: speed
+    id: main_fan
+    name: "Fan"
+    output: pwm_output
+    speed_count: 100
+    on_turn_on:
+      then:
+        - component.update: main_display
+    on_turn_off: 
+      then:
+        - component.update: main_display
+    on_speed_set: 
+      then:
+        - component.update: main_display
+
+binary_sensor:
+  # Down button - short press to go down 10%; long press to tare
+  - platform: gpio
+    id: down_button
+    pin:
+      number: GPIO01
+      mode:
+        input: true
+      inverted: true
+    filters:
+      - delayed_off: 10ms
+    on_multi_click:
+      - timing:
+          - ON for at most 1s
+        then:
+          - logger.log: "down"
+          - lambda: |-
+              id(auto_script).stop();
+              auto speed = (id(main_fan).speed / 10) - 1;
+              if (speed == 0) {
+                id(main_fan).turn_off().set_speed(speed * 10).perform();
+              } else {
+                id(main_fan).turn_on().set_speed(speed * 10).perform();
+              }
+              id(main_display).update();
+
+      - timing:
+          - ON for at least 1s
+        then:
+          - script.execute: tare_script
+  
+  # Up button - short press to go up 10%, long press to start run
+  - platform: gpio
+    id: up_button
+    pin:
+      number: GPIO02
+      mode:
+        input: true
+      inverted: true
+    filters:
+      - delayed_off: 10ms
+    on_multi_click:
+      - timing:
+          - ON for at most 1s
+        then:
+          - logger.log: "up"
+          - lambda: |-
+              id(auto_script).stop();
+              auto speed = (id(main_fan).speed / 10) + 1;
+              id(main_fan).turn_on().set_speed(speed * 10).perform();
+              id(main_display).update();
+      
+      - timing:
+          - ON for at least 1s
+        then:
+          - logger.log: "auto"
+          - lambda: |-
+              if (id(auto_script).is_running()) {
+                id(auto_script).stop();
+              } else {
+                id(auto_script).execute();
+              }
+              id(main_display).update();
+
+sensor:
+  - platform: hx711
+    id: hx711_sensor
+    dout_pin: GPIO08
+    clk_pin: GPIO07
+    gain: 128
+    update_interval: 0.5s
+    filters:
+      - calibrate_linear:
+        - 339200 -> 0
+        - 353400 -> 40700
+      - lambda: return x - id(tare_offset);
+
+  - platform: template
+    id: load_cell_sensor
+    name: "Load Cell"
+    device_class: "weight"
+    state_class: "measurement"
+    unit_of_measurement: mg
+    accuracy_decimals: 0
+    lambda: return id(hx711_sensor).state;
+    update_interval: 0.5s
+    filters:
+      - lambda: 
+          if (id(tare_script).is_running() ) {
+            return 0;
+          }
+          if (id(hx711_sensor).status_has_warning() || isnan(x)) {
+            return id(prev_raw_value);
+          }
+
+          id(prev_raw_value) = x;
+          return x;
+      - quantile:
+          window_size: 5
+          send_every: 1
+          send_first_at: 1
+          quantile: .9
+      - sliding_window_moving_average:
+          window_size: 5
+          send_first_at: 1
+          send_every: 1
+    on_value: 
+      then:
+        - component.update: main_display
+
+font:
+  - file: "gfonts://Roboto"
+    id: roboto_font
+    size: 24
+
+image:
+  - id: grafana_image
+    file: "grafana.png"
+    type: RGBA
+    resize: 115x118
+  - id: fan_image
+    file: mdi:fan
+    resize: 30x30
+  - id: weight_image
+    file: mdi:car-sports
+    resize: 30x30
+
+time:
+  platform: homeassistant
+  id: ha_time
+
+display:
+  - platform: ili9xxx
+    model: ST7789V
+    id: main_display
+    dimensions:
+      height: 128
+      width: 128
+      offset_height: 1
+      offset_width: 2
+    invert_colors: true
+    rotation: 90
+    cs_pin: GPIO15
+    dc_pin: GPIO33
+    reset_pin: GPIO34
+    pages:
+    - id: splash_page
+      lambda: |-
+        it.image(5, 5, id(grafana_image));
+    - id: tare_page
+      lambda: |-
+        it.print(it.get_width() / 2, it.get_height() / 2, id(roboto_font), TextAlign::CENTER, "Tare");
+    - id: main_page
+      lambda: |-
+        // Row 1: Fan speed
+        it.image(7, 7, id(fan_image));
+        if(!id(main_fan).state) {
+          it.printf(120, 22, id(roboto_font), TextAlign::CENTER_RIGHT, "Off");
+        } else {
+          it.printf(120, 22, id(roboto_font), TextAlign::CENTER_RIGHT, "%d%%", id(main_fan).speed);         
+        }
+
+        // Row 2: Auto state
+        if(id(auto_script).is_running()) {
+           it.printf(120, 64, id(roboto_font), TextAlign::CENTER_RIGHT, "Auto");
+        }
+
+        // Row 3: Downforce
+        it.image(7, 91, id(weight_image));
+        it.printf(120, 106, id(roboto_font), TextAlign::CENTER_RIGHT, "%.0fmg", id(load_cell_sensor).state);
+
+
+script:
+  - id: tare_script
+    then:
+      - logger.log: "tare"
+      - display.page.show: tare_page
+      - lambda: id(tare_offset) = 0;
+      - delay: 1.5s
+      - lambda: id(tare_offset) = id(hx711_sensor).state;
+      - delay: 1.5s
+      - display.page.show: main_page
+
+  - id: auto_script
+    then:
+      - repeat: 
+          count: 100
+          then:
+            - lambda: id(main_fan).turn_off().set_speed(0).perform();
+            - delay: 5s
+            - script.execute: tare_script
+            - delay: 5s
+            - repeat:
+                count: 100 
+                then:
+                  - fan.cycle_speed: 
+                      id: main_fan
+                      off_speed_cycle: false
+                  - delay: 1s
+                    
