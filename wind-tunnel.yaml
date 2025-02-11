@@ -8,10 +8,32 @@ esphome:
   libraries:
     - Wire
 
+# Add these pin definitions at the top, after the esphome block
+substitutions:
+  pin_button_down: GPIO01
+  pin_button_up: GPIO02
+  pin_pwm_fan: GPIO06
+  pin_pulse_fan: GPIO07
+  pin_chamber_light: GPIO05
+  pin_loadcell_clk: GPIO39
+  pin_loadcell_dout: GPIO38
+
+  # M5AtomS3 specific pins
+  pin_m5atoms3_display_cs: GPIO15
+  pin_m5atoms3_backlight: GPIO16
+  pin_m5atoms3_spi_clk: GPIO17
+  pin_m5atoms3_spi_mosi: GPIO21
+  pin_m5atoms3_display_dc: GPIO33
+  pin_m5atoms3_display_reset: GPIO34
+
 esp32:
   board: esp32-s3-devkitc-1
   framework:
     type: arduino
+    version: latest
+
+packages:
+  core: !include debug.yaml
 
 # Enable logging
 logger:
@@ -20,11 +42,6 @@ logger:
     fan: WARN
     sensor: WARN
     #hx711: WARN
-
-# Enable Home Assistant API
-api:
-  encryption:
-    key: !secret home_assistant_api_key
 
 ota:
   - platform: esphome
@@ -42,6 +59,8 @@ wifi:
 
 captive_portal:
 
+api:
+
 web_server:
 
 prometheus:
@@ -57,17 +76,17 @@ globals:
     initial_value: '0'
 
 spi:
-  clk_pin: GPIO17
-  mosi_pin: GPIO21
+  clk_pin: ${pin_m5atoms3_spi_clk}
+  mosi_pin: ${pin_m5atoms3_spi_mosi}
 
 output:
   - platform: ledc
-    pin: GPIO05
+    pin: ${pin_pwm_fan}
     channel: 0
     frequency: 19531Hz
     id: pwm_output
   - platform: ledc
-    pin: GPIO16
+    pin: ${pin_m5atoms3_backlight}
     channel: 2
     min_power: 0.65
     max_power: 0.99
@@ -84,15 +103,42 @@ light:
   - platform: neopixelbus
     type: GRB
     variant: WS2812
-    pin: GPIO06
+    pin: ${pin_chamber_light}
     num_leds: 27
     name: "NeoPixel Light"
     effects:
-    - addressable_scan:
-        name: "scan"
-        move_interval: 10ms
-        scan_width: 3
+    - addressable_lambda:
+        name: "My Custom Effect"
+        update_interval: 10ms
+        lambda: |-
+          // it.size() - Number of LEDs
+          // it[num] - Access the LED at index num.
+          // Set the LED at num to the given r, g, b values
+          // it[num] = Color(r, g, b);
+          // Get the color at index num (Color instance)
+          // it[num].get();
 
+          static int state = it.size() - 1;
+          static int width = 10;
+          static auto bright = Color::WHITE;
+          static auto dim = Color::WHITE * 128;
+
+          // Example: Simple color wipe
+          for (int i = it.size() - 1; i >= 0; i--) {
+            if (i > state ) {
+              it[i] = dim;
+            } else if (i > state - width) {
+              it[i] = bright;
+            }  else {
+              it[i] = dim;
+            }
+          }
+
+          state--;
+          if (state < 0 ) {
+            state = it.size() - 1;
+          }
+  
     
 fan:
   - platform: speed
@@ -115,7 +161,7 @@ binary_sensor:
   - platform: gpio
     id: down_button
     pin:
-      number: GPIO01
+      number: ${pin_button_down}
       mode:
         input: true
       inverted: true
@@ -145,7 +191,7 @@ binary_sensor:
   - platform: gpio
     id: up_button
     pin:
-      number: GPIO02
+      number: ${pin_button_up}
       mode:
         input: true
       inverted: true
@@ -177,9 +223,9 @@ binary_sensor:
 sensor:
   - platform: hx711
     id: hx711_sensor
-    dout_pin: GPIO08
-    clk_pin: GPIO07
-    gain: 128
+    dout_pin: ${pin_loadcell_dout}
+    clk_pin: ${pin_loadcell_clk}
+    gain: 64
     update_interval: 0.5s
     filters:
       - calibrate_linear:
@@ -220,6 +266,20 @@ sensor:
       then:
         - component.update: main_display
 
+  - platform: pulse_counter
+    pin:
+      number: ${pin_pulse_fan}
+      mode:
+        input: true
+        pullup: true
+    name: "Fan RPM"
+    unit_of_measurement: 'RPM'
+    filters:
+      - multiply: 30  # Convert pulses/sec to RPM (2 pulses per revolution)
+    update_interval: 2s
+    internal_filter: 13us
+    id: fan_rpm
+
 font:
   - file: "gfonts://Roboto"
     id: roboto_font
@@ -237,9 +297,9 @@ image:
     file: mdi:car-sports
     resize: 30x30
 
-time:
-  platform: homeassistant
-  id: ha_time
+#time:
+#  platform: homeassistant
+#  id: ha_time
 
 display:
   - platform: ili9xxx
@@ -251,10 +311,10 @@ display:
       offset_height: 1
       offset_width: 2
     invert_colors: true
-    rotation: 90
-    cs_pin: GPIO15
-    dc_pin: GPIO33
-    reset_pin: GPIO34
+    rotation: 180
+    cs_pin: ${pin_m5atoms3_display_cs}
+    dc_pin: ${pin_m5atoms3_display_dc}
+    reset_pin: ${pin_m5atoms3_display_reset}
     pages:
     - id: splash_page
       lambda: |-
