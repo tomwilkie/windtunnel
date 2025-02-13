@@ -4,7 +4,11 @@ esphome:
   on_boot:
     then:
       - delay: 1s
+      - lambda: id(main_fan).turn_off().set_speed(0).perform();
       - display.page.show: main_page
+      - light.turn_on:
+          id: chamber_light
+          effect: warp
   libraries:
     - Wire
 
@@ -12,8 +16,8 @@ esphome:
 substitutions:
   pin_button_down: GPIO01
   pin_button_up: GPIO02
-  pin_pwm_fan: GPIO06
-  pin_pulse_fan: GPIO07
+  pin_pwm_fan: GPIO07
+  pin_pulse_fan: GPIO06
   pin_chamber_light: GPIO05
   pin_loadcell_clk: GPIO39
   pin_loadcell_dout: GPIO38
@@ -101,6 +105,7 @@ light:
     output: backlightdim
     restore_mode: RESTORE_DEFAULT_ON
   - platform: neopixelbus
+    id: chamber_light
     type: GRB
     variant: WS2812
     pin: ${pin_chamber_light}
@@ -108,37 +113,36 @@ light:
     name: "NeoPixel Light"
     effects:
     - addressable_lambda:
-        name: "My Custom Effect"
-        update_interval: 10ms
+        name: warp
+        update_interval: 16ms
         lambda: |-
-          // it.size() - Number of LEDs
-          // it[num] - Access the LED at index num.
-          // Set the LED at num to the given r, g, b values
-          // it[num] = Color(r, g, b);
-          // Get the color at index num (Color instance)
-          // it[num].get();
+          static const auto width = 10;
+          static const auto bright = Color::WHITE;
+          static const auto dim = Color::WHITE * 128;
+          static int state = -width;
+          static int cycle = 0;
 
-          static int state = it.size() - 1;
-          static int width = 10;
-          static auto bright = Color::WHITE;
-          static auto dim = Color::WHITE * 128;
+          auto step = 0;
+          if (id(main_fan).state) {
+            step = 1 + (id(main_fan).speed  / 30);
+          }
 
           // Example: Simple color wipe
-          for (int i = it.size() - 1; i >= 0; i--) {
-            if (i > state ) {
-              it[i] = dim;
-            } else if (i > state - width) {
-              it[i] = bright;
+          for (int i = 0; i < it.size(); i++) {
+            if (i < state ) {
+              it[it.size() - i - 1] = dim;
+            } else if (i < state + width) {
+              it[it.size() - i - 1] = bright;
             }  else {
-              it[i] = dim;
+              it[it.size() - i - 1] = dim;
             }
           }
 
-          state--;
-          if (state < 0 ) {
-            state = it.size() - 1;
+          state+=step;
+          if (state > it.size() + width) {
+            state = -width;
           }
-  
+
     
 fan:
   - platform: speed
