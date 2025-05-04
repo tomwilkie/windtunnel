@@ -16,7 +16,7 @@ This repository contains configuration and a Grafana dasboard configuration for 
 # Installing esphome & compiling this project on a Mac
 ```sh
 # We'll use pipx to install esphome, and brew to install pipx
-$ brew install pipx libmagic
+$ brew install pipx libmagic cairo
 
 # Install esphome in its own virtual env
 $ pipx install esphome
@@ -31,4 +31,26 @@ $ ~/.local/bin/esphome run --device=/dev/tty.usbmodem31301 wind-tunnel.yaml
 $ ~/.local/bin/esphome run  wind-tunnel.yaml
 ```
 
-# TODO: Setting up Grafana and Prometheus on your Mac
+# Setting up Grafana and Prometheus on your Mac
+```sh
+# Install Prometheus & Grafana using brew
+$ brew install prometheus grafana
+
+# Tell Prometheus to scrape the wind tunnel
+$ export wind_tunnel_ip="$(ping -c 1 wind-tunnel.local | awk -F'[()]' 'NR==1 {print $2}')"
+$ echo "  - job_name: 'wind-tunnel'
+    scrape_interval: 1s
+    static_configs:
+      - targets: ['${wind_tunnel_ip}:80']" >> /opt/homebrew/etc/prometheus.yml
+
+# Add the Prometheus datasource to Grafana and copy the dashboard into the right place
+$ mkdir -p /opt/homebrew/opt/grafana/share/grafana/conf/provisioning/datasources
+$ cp grafana/prometheus /opt/homebrew/opt/grafana/share/grafana/conf/provisioning/datasources/
+$ mkdir -p /opt/homebrew/opt/grafana/share/grafana/conf/provisioning/dashboards
+$ cp grafana/dashboards.yml /opt/homebrew/opt/grafana/share/grafana/conf/provisioning/dashboards/
+$ mkdir -p /opt/homebrew/var/lib/grafana/dashboards
+$ cp grafana/wind-tunnel.json /opt/homebrew/var/lib/grafana/dashboards
+
+# Start Prometheus and Grafana
+$ brew services start prometheus
+$ brew services start grafana

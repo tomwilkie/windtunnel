@@ -8,7 +8,6 @@ esphome:
       - display.page.show: main_page
       - light.turn_on:
           id: chamber_light
-          effect: warp
   libraries:
     - Wire
 
@@ -16,6 +15,7 @@ esphome:
 substitutions:
   pin_button_down: GPIO01
   pin_button_up: GPIO02
+  pin_button_screen: GPIO41
   pin_pwm_fan: GPIO07
   pin_pulse_fan: GPIO06
   pin_chamber_light: GPIO05
@@ -78,6 +78,10 @@ globals:
     type: float
     restore_value: yes
     initial_value: '0'
+  - id: chamber_light_effect_on
+    type: bool
+    restore_value: no
+    initial_value: 'false'
 
 spi:
   clk_pin: ${pin_m5atoms3_spi_clk}
@@ -224,6 +228,29 @@ binary_sensor:
               }
               id(main_display).update();
 
+  # Up button - short press to go up 10%, long press to start run
+  - platform: gpio
+    id: screen_button
+    pin:
+      number: ${pin_button_screen}
+      mode:
+        input: true
+      inverted: true
+    filters:
+      - delayed_off: 10ms
+    on_multi_click:
+      - timing:
+          - ON for at most 1s
+        then:
+          - logger.log: "screen button"
+          - lambda: |-
+              id(chamber_light_effect_on) = !id(chamber_light_effect_on);
+              if (id(chamber_light_effect_on)) {
+                id(chamber_light).turn_on().set_effect("warp").perform();
+              } else {
+                id(chamber_light).turn_on().set_effect("None").perform();
+              }
+
 sensor:
   - platform: hx711
     id: hx711_sensor
@@ -292,13 +319,18 @@ font:
 image:
   - id: grafana_image
     file: "grafana.png"
-    type: RGBA
+    type: RGB
+    transparency: alpha_channel
     resize: 115x118
   - id: fan_image
     file: mdi:fan
+    type: grayscale
+    transparency: alpha_channel
     resize: 30x30
   - id: weight_image
     file: mdi:car-sports
+    type: grayscale
+    transparency: alpha_channel
     resize: 30x30
 
 #time:
@@ -360,8 +392,9 @@ script:
 
   - id: auto_script
     then:
-      - repeat: 
-          count: 100
+      - while:
+          condition:
+            - lambda: 'return true;'
           then:
             - lambda: id(main_fan).turn_off().set_speed(0).perform();
             - delay: 5s
