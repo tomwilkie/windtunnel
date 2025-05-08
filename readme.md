@@ -54,3 +54,4 @@ $ cp grafana/wind-tunnel.json /opt/homebrew/var/lib/grafana/dashboards
 # Start Prometheus and Grafana
 $ brew services start prometheus
 $ brew services start grafana
+```
